@@ -1,85 +1,68 @@
-name: CD & Deployment Pipeline
+name: Reusable CI Pipeline
 
 on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      environment:
-        description: 'Entorno de despliegue manual'
-        required: true
-        default: 'staging'
-        type: choice
-        options:
-          - staging
-          - production
-
-# Evita ejecuciones simultáneas del mismo grupo
-concurrency:
-  group: deployment-${{ github.ref }}
-  cancel-in-progress: false
-
-# Permisos mínimos requeridos para OIDC
-permissions:
-  id-token: write
-  contents: read
+      node-versions:
+        required: false
+        type: string
+        default: '["18", "20", "22"]'
+      run-lint:
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      build-status:
+        description: "Resultado de la construcción"
+        value: ${{ jobs.build.outputs.status }}
 
 jobs:
-  quality-gate:
-    uses: ./.github/workflows/reusable-ci.yml
-    with:
-      node-versions: '["20", "22"]'
-      run-lint: true
-
-  deploy-staging:
-    name: Deploy to Staging
-    needs: quality-gate
-    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+  test-matrix:
+    name: Test Node.js v${{ matrix.node }}
     runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: https://staging.example.com
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJson(inputs.node-versions) }}
 
     steps:
-      - name: Descargar Artifact de compilación
-        uses: actions/download-artifact@v4
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js v${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Simular pruebas unitarias
+        run: echo "Pruebas simuladas correctamente en Node.js ${{ matrix.node }}"
+
+  build:
+    name: Build & Package
+    needs: test-matrix
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.set-output.outputs.status }}
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Simular compilación
+        run: |
+          mkdir -p dist
+          echo "Build simulado" > dist/index.html
+
+      - name: Guardar Artifact de producción
+        uses: actions/upload-artifact@v4
         with:
           name: build-artifact
           path: dist/
+          retention-days: 1
 
-      - name: Autenticación OIDC con AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsStagingRole
-          aws-region: us-east-1
-
-      - name: Desplegar en Staging
-        run: |
-          echo "Desplegando en Staging..."
-          # aws s3 sync dist/ s3://staging-app-bucket/
-
-  deploy-production:
-    name: Deploy to Production
-    needs: deploy-staging
-    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'production'
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://example.com
-
-    steps:
-      - name: Descargar Artifact de compilación
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifact
-          path: dist/
-
-      - name: Autenticación OIDC con AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsProductionRole
-          aws-region: us-east-1
-
-      - name: Despliegue en Producción
-        run: |
-          echo "Ejecutando despliegue Zero-Downtime en Producción..."
+      - id: set-output
+        run: echo "status=success" >> $GITHUB_OUTPUT
